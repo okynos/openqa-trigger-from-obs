@@ -51,14 +51,15 @@ def rsync_iso_fix_src(archs):
         return '[ -n "$src" ] || [ "$arch" != armv7hl ] || src=$(grep "$filter" __envsub/files_iso.lst | grep armv7l | head -n 1)'
     return ''
 
-def rsync_commands(checksum):
+def rsync_commands(checksum, algo='sha256'):
     res = '''echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/${iso_folder[$flavor]}*$src /var/lib/openqa/factory/$asset_folder/$dest"'''
     if checksum:
         res = res + '''
-        echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/${iso_folder[$flavor]}*$src.sha256 /var/lib/openqa/factory/other/$dest.sha256"'''
+        echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/${iso_folder[$flavor]}*$src.''' + algo + ''' /var/lib/openqa/factory/other/$dest.''' + algo + '''"'''
     return res
 
-rsync_iso = lambda distri, version, archs, staging, checksum, repo0folder, use_staging_patterns: '''
+def rsync_iso(algo='sha256'):
+    return lambda distri, version, archs, staging, checksum, repo0folder, use_staging_patterns: '''
 archs=(ARCHITECTURS)
 
 for flavor in {FLAVORLIST,}; do
@@ -76,7 +77,7 @@ for flavor in {FLAVORLIST,}; do
         [[ ! $dest =~ \.spdx\.json$  ]] || asset_folder=iso
         [[ ! $dest =~ \.tar$  ]] || asset_folder=iso
         [[ ! $dest =~ \.(qcow2|raw|vhd|vmdk|vhdx|xz)$ ]] || asset_folder=hdd
-        ''' + rsync_commands(checksum) + '''
+        ''' + rsync_commands(checksum, algo) + '''
         repo0folder=${dest%.iso}
         repo0folder=${repo0folder%.tar}
         ''' + (repo0folder if repo0folder else "") + '''
@@ -88,7 +89,8 @@ for flavor in {FLAVORLIST,}; do
     done
 done'''
 
-rsync_hdds = '''
+def rsync_hdds(algo='sha256'):
+    return '''
 archs=(ARCHITECTURS)
 
 for flavor in {FLAVORLIST,}; do
@@ -103,7 +105,7 @@ for flavor in {FLAVORLIST,}; do
             done
             [[ $src =~ .iso$ ]] && asset="iso" || asset="hdd"
             echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/$folder/$src /var/lib/openqa/factory/$asset/"
-            echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/$folder/$src.sha256 /var/lib/openqa/factory/other/"
+            echo "rsync --timeout=3600 -tlp4 --specials PRODUCTISOPATH/$folder/$src.''' + algo + ''' /var/lib/openqa/factory/other/"
             echo ""
         done < <(grep ${arch} __envsub/files_iso.lst | LANG=C.UTF-8 sort)
     done
@@ -377,40 +379,42 @@ openqa_call_legacy_builds_link=''
 
 openqa_call_legacy_builds=''
 
-def openqa_call_start_iso(checksum):
+def openqa_call_start_iso(checksum, algo='sha256'):
+    asset_var = 'ASSET_512' if algo == 'sha512' else 'ASSET_256'
     if checksum:
         return r''' [ -z "$destiso" ] || echo " ISO=${destiso} \\
- CHECKSUM_ISO=\$(cut -b-64 /var/lib/openqa/factory/other/${destiso}.sha256 | grep -E '[0-9a-f]{5,40}' | head -n1) \\
- ASSET_256=${destiso}.sha256 \\"'''
+ CHECKSUM_ISO=\$(cut -b-64 /var/lib/openqa/factory/other/${destiso}.''' + algo + r''' | grep -E '[0-9a-f]{5,40}' | head -n1) \\
+ ''' + asset_var + r'''=${destiso}.''' + algo + r''' \\"'''
     return ''' [ -z "$destiso]" || echo \" ISO=${destiso} \\\\
- ASSET_256=${destiso}.sha256 \\\\\"'''
+ ''' + asset_var + '''=${destiso}.''' + algo + ''' \\\\\"'''
 
-def openqa_call_start_ex1(checksum, tag):
+def openqa_call_start_ex1(checksum, tag, algo='sha256'):
     res = tag + '=${destiso} \\\\'
     if checksum:
         res += '''
- CHECKSUM_''' + tag + r'''=\$(cut -b-64 /var/lib/openqa/factory/other/${destiso}.sha256 | grep -E '[0-9a-f]{5,40}' | head -n1) \\
- ASSET_256=${destiso}.sha256 \\'''
+ CHECKSUM_''' + tag + r'''=\$(cut -b-64 /var/lib/openqa/factory/other/${destiso}.''' + algo + r''' | grep -E '[0-9a-f]{5,40}' | head -n1) \\
+ ''' + asset_var + r'''=${destiso}.''' + algo + r''' \\'''
     return res
 
 
-def openqa_call_start_ex(checksum):
+def openqa_call_start_ex(checksum, algo='sha256'):
     return r''' if [[ ${norsync_filter[$filter]} == 1 ]]; then
    :
  elif [[ $destiso =~ \.iso$ ]]; then
-   echo " ''' + openqa_call_start_ex1(checksum, 'ISO')  + r'''"
+   echo " ''' + openqa_call_start_ex1(checksum, 'ISO', algo)  + r'''"
  elif [[ $destiso =~ \.spdx.json$ ]]; then
-   echo " ''' + openqa_call_start_ex1(checksum, 'ISO')  + r'''"
+   echo " ''' + openqa_call_start_ex1(checksum, 'ISO', algo)  + r'''"
  elif [[ $destiso =~ \.tar$ ]]; then
-   echo " ''' + openqa_call_start_ex1(checksum, 'ISO')  + r'''"
+   echo " ''' + openqa_call_start_ex1(checksum, 'ISO', algo)  + r'''"
  elif [[ $destiso =~ \.(hdd|qcow2|raw|raw\.xz|raw\.gz|vhdx\.xz|vmdk|vmdk\.xz)$ ]]; then
-   echo " ''' + openqa_call_start_ex1(checksum, 'HDD_1')  + r'''"
+   echo " ''' + openqa_call_start_ex1(checksum, 'HDD_1', algo)  + r'''"
  elif [ -n "$destiso" ]; then
-   echo " ''' + openqa_call_start_ex1(checksum, 'ASSET_1')  + r'''"
+   echo " ''' + openqa_call_start_ex1(checksum, 'ASSET_1', algo)  + r'''"
  fi
 '''
 
-openqa_call_start_hdds=r'''
+def openqa_call_start_hdds(algo='sha256'):
+    return r'''
  i=1
  while read src; do
      folder=""
@@ -421,13 +425,13 @@ openqa_call_start_hdds=r'''
          fi
      done
      n=$((i++))
-     echo " ASSET_$((n+255))=$src.sha256 \\"
+     echo " ASSET_$((n+255))=$src.''' + algo + r''' \\"
      if [[ $src =~ .iso$ ]]; then
          echo " ISO=$src \\"
-         echo " CHECKSUM_ISO=\$(cut -b-64 /var/lib/openqa/factory/other/$src.sha256 | grep -E '[0-9a-f]{5,40}' | head -n1) \\"
+         echo " CHECKSUM_ISO=\$(cut -b-64 /var/lib/openqa/factory/other/$src.''' + algo + r''' | grep -E '[0-9a-f]{5,40}' | head -n1) \\"
      else
          echo " HDD_$n=$src \\"
-         echo " CHECKSUM_HDD_$n=\$(cut -b-64 /var/lib/openqa/factory/other/$src.sha256 | grep -E '[0-9a-f]{5,40}' | head -n1) \\"
+         echo " CHECKSUM_HDD_$n=\$(cut -b-64 /var/lib/openqa/factory/other/$src.''' + algo + r''' | grep -E '[0-9a-f]{5,40}' | head -n1) \\"
      fi
  done < <(grep ${arch} __envsub/files_iso.lst | LANG=C.UTF-8 sort)
 '''
